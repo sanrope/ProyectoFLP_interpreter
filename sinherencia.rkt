@@ -1,81 +1,124 @@
 #lang eopl
-(require racket/local)
-;^;;;;;;;;;;;;;;; grammatical specification ;;;;;;;;;;;;;;;;
 
-(define the-lexical-spec
-  '((whitespace (whitespace) skip)
-    (comment ("%" (arbno (not #\newline))) skip)
-    (identifier
-      (letter (arbno (or letter digit "_" "-" "?")))
-      symbol)
-    (number (digit (arbno digit)) number)))
+;******************************
+;;;;; Interpretador para lenguaje con condicionales, ligadura local, procedimientos,
+;;;;; procedimientos recursivos, ejecución secuencial y asignación de variables
 
-(define the-grammar
+;; La definición BNF para las expresiones del lenguaje:
+;;
+;;  <program>       ::= <expression>
+;;                      <a-program ((list Classes)exp)>
+;;  <expression>    ::= <number>
+;;                      <lit-exp (datum)>
+;;                  ::= <identifier>
+;;                      <var-exp (id)>
+;;                  ::= <primitive> ({<expression>}*(,))
+;;                      <primapp-exp (prim rands)>
+;;                  ::= if <expresion> then <expresion> else <expression>
+;;                      <if-exp (exp1 exp2 exp23)>
+;;                  ::= let {<identifier> = <expression>}* in <expression>
+;;                      <let-exp (ids rands body)>
+;;                  ::= proc({<identificador>}*) <expression>
+;;                      <proc-exp (ids body)>
+;;                  ::= (<expression> {<expression>}*)
+;;                      <app-exp proc rands>
+;;                  ::= letrec  {identifier ({identifier}(,)) = <expression>} in <expression>
+;;                     <letrec-exp(proc-names idss bodies bodyletrec)>
+;;                  ::= begin <expression> {; <expression>}* end
+;;                     <begin-exp (exp exps)>
+;;                  ::= set <identifier> = <expression>
+;;                     <set-exp (id rhsexp)>
+;;  <primitive>     ::= + | - | * | add1 | sub1 
+
+;******************************
+
+;******************************
+;Especificación Léxica
+
+(define scanner-spec-simple-interpreter
+'((white-sp
+   (whitespace) skip)
+  (comment
+   ("%" (arbno (not #\newline))) skip)
+  (identifier
+   (letter (arbno (or letter digit "_" "-" "?"))) symbol)
+  (number
+   (digit (arbno digit)) number)
+  (number
+   ("-" digit (arbno digit)) number)
+  (str
+   ("|" (arbno (or letter digit)) "|") string)
+  ))
+
+;EspecificaciÃ³n SintÃ¡ctica (gramÃ¡tica)
+
+(define grammar-simple-interpreter
   '((program ((arbno class-decl) expression) a-program)
+    
     (expression (number) lit-exp)
-    (expression (identifier) var-exp)   
+    (expression (identifier) var-exp)
+    (expression (str) string-exp)
     (expression
-      (primitive "(" (separated-list expression ",") ")")
-      primapp-exp)
-    (expression
-      ("if" expression "then" expression "else" expression)
-      if-exp)
-   ; (expression
-    ; ("if" expression "then" expression "elseif" expression "then" expression "else" expression)
-   ;   elseif-exp)
-   (expression
-      ("let" (arbno  identifier "=" expression) "in" expression)
-      let-exp)
-    (expression
-      ("proc" "(" (separated-list identifier ",") ")" expression)
-      proc-exp)
-    (expression
-      ("(" expression (arbno expression) ")")
-      app-exp)
-    (expression                         
-      ("letrec"
-        (arbno identifier "(" (separated-list identifier ",") ")"
-          "=" expression)
-        "in" expression)
-      letrec-exp)
-    (expression ("set" identifier ":=" expression) varassign-exp)
-    (expression
-      ("begin" expression (arbno ";" expression) "end")
-      begin-exp)
+     (primitive "(" (separated-list expression ",")")")
+     primapp-exp)
+    (expression ("if" expression "then" expression "else" expression)
+                if-exp)
+    (expression ("let" (arbno identifier "=" expression) "in" expression)
+                let-exp)
+    (expression ("proc" "(" (arbno identifier) ")" expression)
+                proc-exp)
+    (expression ( "(" expression (arbno expression) ")")
+                app-exp)
+    (expression ("letrec" (arbno identifier "(" (separated-list identifier ",") ")" "=" expression)  "in" expression) 
+                letrec-exp)
+    
+    ; caracterÃsticas adicionales
+    (expression ("begin" expression (arbno ";" expression) "end")
+                begin-exp)
+    (expression ("set" identifier "=" expression)
+                set-exp)
 
-    (primitive ("+")     add-prim)
-    (primitive ("-")     substract-prim)
-    (primitive ("*")     mult-prim)
-    (primitive ("add1")  incr-prim)
-    (primitive ("sub1")  decr-prim)
+    ;;;;;;
+    ;; PRIMITIVAS BASICAS
+    (primitive ("+") add-prim)
+    (primitive ("-") substract-prim)
+    (primitive ("*") mult-prim)
     (primitive ("/") div-prim)
-    (primitive (">") moreThan-prim)
-    (primitive ("<") lessThan-prim)
-    (primitive (">=") moreOrEqualThan-prim)
-    (primitive ("<=") lessOrEqualThan-prim)
-    (primitive ("=") equal-prim)
+    (primitive ("add1") incr-prim)
+    (primitive ("sub1") decr-prim)
+    ;; PRIMITIVAS BOOLEANAS
+    (primitive ("==") equal-prim)
+    (primitive ("=or") equalor-prim)
+    (primitive ("=&") equaland-prim)
+    (primitive (">") morethan-prim)
+    (primitive (">&") morethanand-prim)
+    (primitive (">or") morethanor-prim)
+    (primitive ("<") lessthan-prim)
+    (primitive ("<&") lessthanand-prim)
+    (primitive ("<or") lessthanor-prim)
+    (primitive (">=") morethanequal-prim)
+    (primitive (">=&") morethanequaland-prim)
+    (primitive (">=or") morethanequalor-prim)
+    (primitive ("<=") lessthanequal-prim)
+    (primitive ("<=&") lessthanequaland-prim)
+    (primitive ("<=or") lessthanequalor-prim)
     (primitive ("max") max-prim)
     (primitive ("min") min-prim)
-    (primitive ("and") and-prim)
+    (primitive ("&") and-prim)
+    (primitive ("&&") andand-prim)
     (primitive ("or") or-prim)
-    (primitive ("not") not-prim)
-    ;(primitive ("zero?") zero-test-prim)
-    (primitive ("list") list-prim)
-    (primitive ("cons") cons-prim)
-    ;(primitive ("nil")  nil-prim)
-    (primitive ("car")  car-prim)
-    (primitive ("cdr")  cdr-prim)
-    (primitive ("null?") null-prim)
+    (primitive ("or|") oror-prim)
+    ;; PRIMITIVAS CON LISTAS
+    ;(primitive ("car") car-prim)
+    ;(primitive ("cdr") cdr-prim)
+    ;(primitive ("cons") cons-prim)
+    ;(primitive ("null?") null?-prim)
 
 
+    ;************DECL para objetos*******************
 
-
-    
-;^;;;;;;;;;;;;;;; new productions for oop ;;;;;;;;;;;;;;;;
-
-    
-    (class-decl                         
-      ("class" identifier                 
+     (class-decl                         
+      ("class" identifier  
          (arbno "field" identifier)
          (arbno method-decl)
          )
@@ -93,41 +136,154 @@
       new-object-exp)
 
     (expression
-      ("class." expression "." identifier
+      ("send" expression identifier
         "("  (separated-list expression ",") ")")
       method-app-exp)
 
-
+    ;(expression                                
+     ; ("super" identifier    "("  (separated-list expression ",") ")")
+      ;super-call-exp)
     
+            ))
 
-;^;;;;;;;;;;;;;;; end new productions for oop ;;;;;;;;;;;;;;;;
 
-    ))
+;Tipos de datos para la sintaxis abstracta de la gramÃ¡tica
 
-(sllgen:make-define-datatypes the-lexical-spec the-grammar)
+;Construidos manualmente:
 
-(define list-the-datatypes
-  (lambda () (sllgen:list-define-datatypes the-lexical-spec the-grammar)))
+;(define-datatype program program?
+;  (a-program
+;   (exp expression?)))
+;
+;(define-datatype expression expression?
+;  (lit-exp
+;   (datum number?))
+;  (var-exp
+;   (id symbol?))
+;  (primapp-exp
+;   (prim primitive?)
+;   (rands (list-of expression?)))
+;  (if-exp
+;   (test-exp expression?)
+;   (true-exp expression?)
+;   (false-exp expression?))
+;  (let-exp
+;   (ids (list-of symbol?))
+;   (rans (list-of expression?))
+;   (body expression?))
+;  (proc-exp
+;   (ids (list-of symbol?))
+;   (body expression?))
+;  (app-exp
+;   (proc expression?)
+;   (args (list-of expression?)))
+;  (letrec-exp
+;   (proc-names (list-of symbol?))
+;   (idss (list-of (list-of symbol?)))
+;   (bodies (list-of expression?))
+;   (body-letrec expression?))
+;  (begin-exp
+;   (exp expression?)
+;   (exps (list-of expression?)))
+;  (set-exp
+;   (id symbol?)
+;   (rhs expression?)))
+;
+;(define-datatype primitive primitive?
+;  (add-prim)
+;  (substract-prim)
+;  (mult-prim)
+;  (incr-prim)
+;  (decr-prim))
+
+;Construidos automÃ¡ticamente:
+
+(sllgen:make-define-datatypes scanner-spec-simple-interpreter grammar-simple-interpreter)
+
+(define show-the-datatypes
+  (lambda () (sllgen:list-define-datatypes scanner-spec-simple-interpreter grammar-simple-interpreter)))
+
+;*******************************
+;Parser, Scanner, Interfaz
+
+;El FrontEnd (AnÃ¡lisis lÃ©xico (scanner) y sintÃ¡ctico (parser) integrados)
 
 (define scan&parse
-  (sllgen:make-string-parser the-lexical-spec the-grammar))
+  (sllgen:make-string-parser scanner-spec-simple-interpreter grammar-simple-interpreter))
+
+;El Analizador LÃ©xico (Scanner)
 
 (define just-scan
-  (sllgen:make-string-scanner the-lexical-spec the-grammar))
+  (sllgen:make-string-scanner scanner-spec-simple-interpreter grammar-simple-interpreter))
 
-;^;;;;;;;;;;;;;;; the interpreter ;;;;;;;;;;;;;;;;
+;El Interpretador (FrontEnd + EvaluaciÃ³n + seÃ±al para lectura )
 
-(define eval-program 
+(define interpretador
+  (sllgen:make-rep-loop  "--> "
+    (lambda (pgm) (eval-program  pgm)) 
+    (sllgen:make-stream-parser 
+      scanner-spec-simple-interpreter
+      grammar-simple-interpreter)))
+
+;*******************************
+;El Interprete
+
+;eval-program: <programa> -> numero
+; funciÃ³n que evalÃºa un programa teniendo en cuenta un ambiente dado (se inicializa dentro del programa)
+
+(define eval-program
   (lambda (pgm)
     (cases program pgm
       (a-program (c-decls exp)
-        (elaborate-class-decls! c-decls) ;\new1
-        (eval-expression exp (empty-env))))))
+                 (elaborate-class-decls! c-decls)
+                 (eval-expression exp (empty-env))))))
+
+; Ambiente inicial
+;(define init-env
+;  (lambda ()
+;    (extend-env
+;     '(x y z)
+;     '(4 2 5)
+;     (empty-env))))
+
+(define init-env
+  (lambda ()
+    (extend-env
+     '(i v x)
+     (list (direct-target 1)
+           (direct-target 5)
+           (direct-target 10))
+     (empty-env))))
+
+;(define init-env
+;  (lambda ()
+;    (extend-env
+;     '(x y z f)
+;     (list 4 2 5 (closure '(y) (primapp-exp (mult-prim) (cons (var-exp 'y) (cons (primapp-exp (decr-prim) (cons (var-exp 'y) ())) ())))
+;                      (empty-env)))
+;     (empty-env))))
+
+;eval-expression: <expression> <enviroment> -> numero
+; evalua la expresiÃ³n en el ambiente de entrada
+
+;******************************
+;Definición tipos de datos referencia y blanco
+
+(define-datatype target target?
+  (direct-target (expval expval?))
+  (indirect-target (ref ref-to-direct-target?)))
+
+(define-datatype reference reference?
+  (a-ref (position integer?)
+         (vec vector?)))
+
+;******************************
 
 (define eval-expression
   (lambda (exp env)
     (cases expression exp
       (lit-exp (datum) datum)
+      (string-exp (str) str)
       (var-exp (id) (apply-env env id))
       (primapp-exp (prim rands)
                    (let ((args (eval-primapp-exp-rands rands env)))
@@ -136,14 +292,6 @@
               (if (true-value? (eval-expression test-exp env))
                   (eval-expression true-exp env)
                   (eval-expression false-exp env)))
-      ;;;;
-     ; (elseif-exp (test-exp true-exp second-test-exp second-true-exp  false-exp)
-         ;         (if (true-value? (eval-expression test-exp env))
-      ;                (eval-expression true-exp env)
-         ;             (if (true-value? (eval-expression second-test-exp env))
-          ;                (eval-expression second-true-exp env)
-          ;                (eval-expression false-exp env))))
-      ;;;;
       (let-exp (ids rands body)
                (let ((args (eval-let-exp-rands rands env)))
                  (eval-expression body (extend-env ids args env))))
@@ -151,49 +299,61 @@
                 (closure ids body env))
       (app-exp (rator rands)
                (let ((proc (eval-expression rator env))
-                     (args (eval-rands      rands env)))
+                     (args (eval-rands rands env)))
                  (if (procval? proc)
-                     (apply-procval proc args)
-                     (eopl:error 'eval-expression 
+                     (apply-procedure proc args)
+                     (eopl:error 'eval-expression
                                  "Attempt to apply non-procedure ~s" proc))))
       (letrec-exp (proc-names idss bodies letrec-body)
                   (eval-expression letrec-body
                                    (extend-env-recursively proc-names idss bodies env)))
-      (varassign-exp (id rhs-exp)
-                     (setref!
-                      (apply-env-ref env id)
-                      (eval-expression rhs-exp env))
-                     1)
-;&
-      (begin-exp (exp1 exps)
-        (let loop ((acc (eval-expression exp1 env))
-                   (exps exps))
-          (if (null? exps) acc
-            (loop (eval-expression (car exps) env) (cdr exps)))))
-;^;;;;;;;;;;;;;;; begin new cases for chap 5 ;;;;;;;;;;;;;;;;
-      
+
+      (set-exp (id rhs-exp)
+                 (setref!
+                  (apply-env-ref env id)
+                  (eval-expression rhs-exp env))
+                 1)
+      (begin-exp (exp exps)
+                 (let loop ((acc (eval-expression exp env))
+                             (exps exps))
+                    (if (null? exps) 
+                        acc
+                        (loop (eval-expression (car exps) 
+                                               env)
+                              (cdr exps)))))
+
+
+      ;*******EXP objetos*************
+
+
       (new-object-exp (class-name rands)
         (let ((args (eval-rands rands env))
               (obj (new-object class-name)))
-          (begin
-            (find-method-and-apply
-              'initialize class-name obj args)
-             obj)))
+          (find-method-and-apply
+            'initialize class-name obj args)
+          obj))
       
       (method-app-exp (obj-exp method-name rands)
         (let ((args (eval-rands rands env))
               (obj (eval-expression obj-exp env)))
           (find-method-and-apply
-            method-name (part->class-name obj) obj args)))
-          ;args))
+            method-name (object->class-name obj) obj args)))
       
-;^;;;;;;;;;;;;;;; end new cases for chap 5 ;;;;;;;;;;;;;;;;
-      )))
-      
+      ;(super-call-exp (method-name rands)
+       ; (let ((args (eval-rands rands env))
+        ;      (obj (apply-env env 'self)))
+         ; (find-method-and-apply
+          ;  method-name (apply-env env '%super) obj args)))
 
+      
+      
+      )))
+
+; funciones auxiliares para aplicar eval-expression a cada elemento de una 
+; lista de operandos (expresiones)
 (define eval-rands
-  (lambda (rands env)
-    (map (lambda (x) (eval-rand x env)) rands)))
+  (lambda (exps env)
+    (map (lambda (exp) (eval-expression exp env)) exps)))
 
 (define eval-rand
   (lambda (rand env)
@@ -206,7 +366,6 @@
                     (indirect-target (ref1) ref1)))))
       (else
        (direct-target (eval-expression rand env))))))
-
 
 (define eval-primapp-exp-rands
   (lambda (rands env)
@@ -221,179 +380,428 @@
   (lambda (rand env)
     (direct-target (eval-expression rand env))))
 
-
-(define make-list-of-direct-target
-  (lambda (list)
-    (if (null? list)
-        empty
-        (cons (direct-target (car list)) (make-list-of-direct-target (cdr list))))))
-
-
+;apply-primitive: <primitiva> <list-of-expression> -> numero
 (define apply-primitive
   (lambda (prim args)
     (cases primitive prim
-      (add-prim () (suma args 0));funciona
-      (substract-prim () (division-resta - args));funciona
-      (mult-prim () (if (null? args)
-                        (eopl:error 'apply-primitive "empty list ~s" args)
-                        (multiplicacion args 1)));funciona
-      (div-prim() (division-resta / args));funciona
-      (incr-prim () (add1-sub1 + args));funciona
-      (decr-prim () (add1-sub1 - args));funciona
-      (moreThan-prim() (mayor-menor-igual args >));funciona
-      (lessThan-prim() (mayor-menor-igual args <));funciona
-      (lessOrEqualThan-prim() (mayor-menor-igual args <=));funciona
-      (moreOrEqualThan-prim() (mayor-menor-igual args >=));funciona
-      (equal-prim() (mayor-menor-igual args equal?));funciona      
-      (max-prim() ((car (reverse (insertionSort args)))));funciona
-      (min-prim() (car (insertionSort args)));funciona   
-      (and-prim() (mayor-menor-igual args (lambda (u v) (and u v))));funciona
-      (or-prim() (mayor-menor-igual args (lambda (u v) (or u v))));funciona
-      (not-prim() (if (= (length args) 1)
-                      (not (true-value? (car args)))
-                      (eopl:error 'apply-primitive "just valid for 1 value, given values ~s" (length args))
-                      ))
-      (list-prim() args)
-      (cons-prim() (cons (car args) (car (cdr args))))
-      (car-prim() (if (> (length args) 1)
-                      (eopl:error 'apply-primitive "just valid for 1 value, given values ~s" (length args))
-                      (car (car args))
-                      ));funciona para listas
-      
-      (cdr-prim() (if (> (length args) 1)
-                      (eopl:error 'apply-primitive "just valid for 1 value, given values ~s" (length args))
-                      (cdr (car args))
-                      ));funciona
-      (null-prim() (null? args))
-     ; (zero-test-prim () (if (zero? (car args)) 1 0))
-      ;(nil-prim () '())
-      )));funciona
-
-;FUNCIONES AUXILIARES
-
-(define lista-cons
+      ;; ARITMETHIC PRIMS
+      (add-prim () (aux-add args))
+      (substract-prim () (aux-substract args))
+      (mult-prim () (aux-mult args))
+      (div-prim () (aux-div args))
+      (incr-prim () (+ (car args) 1))
+      (decr-prim () (- (car args) 1))
+      ; BOOLEAN PRIMS
+      (and-prim () ((if (null? args)
+                        (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                               (and-aux (args)))))
+      (andand-prim () ((if (null? args)
+                           (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                           (andand-aux ((car args) (cdr args))))))
+      (or-prim () ((if (null? args)
+                       (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                       (or-aux ((car args) (cdr args))))))
+      (oror-prim () ((if (null? args)
+                         (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                         (oror-aux ((car args) (cdr args))))))
+      (equal-prim () ((if (null? args)
+                          (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                          (equal-aux(args)))))
+      (equaland-prim () ((if (null? args)
+                             (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                               (equaland-aux(args)))))
+      (equalor-prim () ((if (null? args)
+                            (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                            (equalor-aux(args)))))
+      (morethan-prim () (if (null? args)
+                            (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                            (morethan(args))))
+      (morethanand-prim () ((if (null? args)
+                               (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                               (morethanand (car args) (cdr args)))))
+      (morethanor-prim () ((if (null? args)
+                              (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                              (morethanor (car args) (cdr args)))))
+      (lessthan-prim () ((if (null? args)
+                            (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                            (lessthan (args)))))
+      (lessthanand-prim () ((if (null? args)
+                               (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                               (lessthanand (car args) (cdr args)))))
+      (lessthanor-prim () ((if (null? args)
+                              (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                              (lessthanor (car args) (cdr args)))))
+      (morethanequal-prim () ((if (null? args)
+                                  (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                                  (morethanequal(args)))))
+      (morethanequaland-prim () ((if (null? args)
+                                    (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                                    (morethanandequal (car args) (cdr args)))))
+      (morethanequalor-prim () ((if (null? args)
+                                    (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                                    (morethanorequal (car args) (cdr args)))))
+      (lessthanequal-prim () ((if (null? args)
+                                  (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                                  (lessthanequal (args)))))
+      (lessthanequaland-prim () ((if (null? args)
+                                     (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                                     (lessthanandequal (car args) (cdr args)))))
+      (lessthanequalor-prim () ((if (null? args)
+                                    (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                                    (lessthanorequal (car args) (cdr args)))))
+      (max-prim () ((if (null? args)
+                                    (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                                    (max-aux (car args) (cdr args)))))
+      (min-prim () ((if (null? args)
+                                    (eopl:error 'apply-primitive "Attempt to apply procedure with no arguments ~s" args)
+                                    (min-aux (car args) (cdr args)))))
+      )))
+; AUXILIARES +,-,*,/
+(define aux-add
   (lambda (args)
-    (cond
-      [(null? args) empty]
-      [(list? args) (cons (car args) (lista-cons (cdr args)))])))
-
-;Suma
-
-(define suma
-  (lambda(list-of-numbers aux)
-    (if (null? list-of-numbers)
-        aux
-        (and (set! aux (+ (car list-of-numbers) aux)) (suma (cdr list-of-numbers) aux)))))
-
-(define multiplicacion
-  (lambda(list-of-numbers aux)
-    (if (null? list-of-numbers)
-        aux
-        (and (set! aux (* (car list-of-numbers) aux)) (multiplicacion (cdr list-of-numbers) aux)))))
-
-
-(define add1-sub1
-  (lambda (sym list-of-numbers)
-    (if(or(null? list-of-numbers) (> (length list-of-numbers) 1))
-       (eopl:error 'add1-sub1 "just valid for 1 value, given values ~s " (length list-of-numbers))
-       (sym (car list-of-numbers) 1))))
-
-;Insertion sort
-
-(define insertionSort
-  (lambda (list)
-    (if (null? list)
-        '()
-        (insert (car list)
-                (insertionSort (cdr list))
-        )
+    (if (not (null? args))
+    (+ (car args) (aux-add (cdr args)))
+    0
+    )
+  )
+)
+(define aux-substract
+  (lambda (args)
+    (if (not (null? args))
+    (- (car args) (aux-add (cdr args)))
+    0
+    )
+  )
+)
+(define aux-mult
+  (lambda (args)
+    (if (not (null? args))
+    (* (car args) (aux-add (cdr args)))
+    1
+    )
+  )
+)
+(define aux-div
+  (lambda (args)
+    (if (not (null? args))
+    (/ (car args) (aux-add (cdr args)))
+    1
     )
   )
 )
 
-(define insert
-  (lambda (sym sortedList)
-    (if (null? sortedList)
-        (list sym)
-        (if (<= sym (car sortedList))
-            (cons sym sortedList)
-            (cons (car sortedList) (insert sym (cdr sortedList))
+; AUXILIARES AND Y OR
+(define and-aux
+  (lambda (args)
+    (if (not (null? args))
+        (if (and (car args) (cadr args))
+            (and-aux (cdr args))
+            #f
+            )
+        #t
+        ) 
+    )
+  )
+
+(define andand-aux
+  (lambda (initvalue args)
+    (if (not (null? args))
+        (if (and initvalue (car args))
+            (and-aux initvalue (cdr args))
+            #f
+            )
+        #t
+        ) 
+    )
+  )
+
+(define or-aux
+  (lambda (args)
+    (if (not (null? args))
+        (if (or  (car args) (cadr args))
+            #t
+            (or-aux (cdr args))
+            )
+        #f
         )
     )
   )
-))    
 
+(define oror-aux
+  (lambda (initvalue args)
+    (if (not (null? args))
+        (if (or  initvalue (car args))
+            #t
+            (oror-aux initvalue (cdr args))
+            )
+        #f
+        )
+    )
+  )
 
+; AUXILIARES DE MAX Y MIN
+(define max-aux
+  (lambda (initvalue args)
+    (if (not(null? args))
+        (if (> initvalue (car args))
+            (max-aux initvalue (cdr args))
+            (max-aux (car args) (cdr args))
+            )
+        initvalue
+        )
+    )
+  )
 
-(define division-resta
-  (lambda (sym list-of-numbers)
-    (local [(define division-resta-aux
-              (lambda (list-of-numbers aux-number)
-                (if (null? list-of-numbers)
-                    aux-number
-                    (division-resta-aux (cdr list-of-numbers) (sym aux-number (car list-of-numbers) )))
-                )
-              )
-            ]
-      (division-resta-aux (cdr list-of-numbers) (car list-of-numbers))
-      )
+(define min-aux
+  (lambda (initvalue args)
+    (if (not(null? args))
+        (if (< initvalue (car args))
+            (min-aux initvalue (cdr args))
+            (min-aux (car args) (cdr args))
+            )
+        initvalue
+        )
+    )
+  )
+; AUXILIARES DE MORETHAN Y LESSTHAN
+(define morethan
+  (lambda (args)
+    (if (not(null? args))
+        (if (> (car args) (cadr args))
+            (morethan (cdr args))
+            #f
+            )
+        #t
+        )
+    )
+  )
+
+(define morethanand
+  (lambda (initvalue args)
+    (if (not(null? args))
+        (if (> initvalue (car args))
+            (morethanand initvalue (cdr args))
+            #f
+            )
+        #t
+        )
+    )
+)
+
+(define morethanor
+  (lambda (initvalue args)
+    (if (not(null? args))
+        (if (> initvalue (car args))
+            #t
+            (morethanor initvalue (cdr args))
+            )
+        #f
+        )
+    )
+  )
+
+(define lessthan
+  (lambda (args)
+    (if (not(null? args))
+        (if (< (car args) (cadr args))
+            (morethan (cdr args))
+            #f
+            )
+        #t
+        )
+    )
+  )
+
+(define lessthanand
+  (lambda (initvalue args)
+    (if (not(null? args))
+        (if (< initvalue (cadr args))
+            (morethanand initvalue (cdr args))
+            #f
+            )
+        #t
+        )
+    )
+)
+
+(define lessthanor
+  (lambda (initvalue args)
+    (if (not(null? args))
+        (if (< initvalue (cadr args))
+            #t
+            (morethanand initvalue (cdr args))
+            )
+        #f
+        )
+    )
+)
+
+(define morethanequal
+  (lambda (args)
+    (if (not(null? args))
+        (if (>= (car args) (cadr args))
+            (morethan (cdr args))
+            #f
+            )
+        #t
+        )
+    )
+  )
+
+(define morethanandequal
+  (lambda (initvalue args)
+    (if (not(null? args))
+        (if (>= initvalue (car args))
+            (morethanand initvalue (cdr args))
+            #f
+            )
+        #t
+        )
+    )
+)
+
+(define morethanorequal
+  (lambda (initvalue args)
+    (if (not(null? args))
+        (if (>= initvalue (car args))
+            #t
+            (morethanor initvalue (cdr args))
+            )
+        #f
+        )
+    )
+  )
+
+(define lessthanequal
+  (lambda (args)
+    (if (not(null? args))
+        (if (< (car args) (cadr args))
+            (morethan (cdr args))
+            #f
+            )
+        #t
+        )
+    )
+  )
+
+(define lessthanandequal
+  (lambda (initvalue args)
+    (if (not(null? args))
+        (if (<= initvalue (car args))
+            (morethanand initvalue (cdr args))
+            #f
+            )
+        #t
+        )
+    )
+)
+
+(define lessthanorequal
+  (lambda (initvalue args)
+    (if (not(null? args))
+        (if (<= initvalue (car args))
+            #t
+            (morethanor initvalue (cdr args))
+            )
+        #f
+        )
+    )
+  )
+; AUXILIARES DE EQUAL
+(define equal-aux
+  (lambda (args)
+    (if (not (null? args))
+        (if (equal? (car args)(cadr args))
+            (equal-aux (cdr args))
+            #f
+            )
+        #t
+        )
+    )
+  )
+
+(define equaland-aux
+  (lambda (initvalue args)
+    (if (not(null? args))
+        (if (equal? initvalue (car args))
+            (equaland-aux initvalue (cdr args))
+            #f
+            )
+        #t
+        )
+    )
+  )
+
+(define equalor-aux
+  (lambda (initvalue args)
+    (if (not(null? args))
+        (if (equal? initvalue (car args))
+            (equal-aux initvalue (cdr args))
+            #f
+            )
+        #t
+        )
     )
   )
 
 
+ ;************Define para object****************
 
-(define mayor-menor-igual
-  (lambda (lista sym)
-          (if (> (length lista) 1)
-              (local [(define mayor-menor-igual-aux
-                        (lambda (lista aux)
-                          (if aux
-                              (if (pair? (cdr lista))
-                                  (mayor-menor-igual-aux (cdr lista) (sym (car lista) (cadr lista)))
-                                  aux)
-                              #f)
-                          )
-                        )
-                      ]
-                (mayor-menor-igual-aux lista #true))
-             (eopl:error mayor-menor-igual "empty list ~s" lista)
-          )
-  ))
+ (define-datatype part part? 
+  (a-part
+    (class-name symbol?)
+    (fields vector?)))
 
+(define new-object
+  (lambda (class-name)
+    (if (eqv? class-name 'object)
+      '()
+      (let ((c-decl (lookup-class class-name)))
+        (make-first-part c-decl)
+        ;(cons
+         ; (make-first-part c-decl)
+          ;(new-object (class-decl->super-name c-decl))) ;dudas
 
+        ))))
 
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-(define init-env 
-  (lambda ()
-    (extend-env
-      '(i v x)
-      '(1 5 10)
-      (empty-env))))
+(define make-first-part
+  (lambda (c-decl)
+    (a-part
+      (class-decl->class-name c-decl)
+      (make-vector (length (class-decl->field-ids c-decl))))))
 
 
-;^;;;;;;;;;;;;;;; booleans ;;;;;;;;;;;;;;;;
 
+;BOOLEAN DATATYPE
+(define-datatype boolean boolean?
+  (true-value
+   (value true-value?))
+  (false-value
+   (value (not(true-value?))))
+  )
+
+;true-value?: determina si un valor dado corresponde a un valor booleano falso o verdadero
 (define true-value?
   (lambda (x)
-    (not (zero? x))))
+    (equal? x #t)))
+
+;*******************************
 
 
-;;;;;;;;;;;;;;;; declarations ;;;;;;;;;;;;;;;;
+;*******Definicion de declaraciones*************
 
 
-(define class-decl->class-name
+ (define class-decl->class-name
   (lambda (c-decl)
     (cases class-decl c-decl
       (a-class-decl (class-name field-ids m-decls)
         class-name))))
 
 ;(define class-decl->super-name
-;  (lambda (c-decl)
-;    (cases class-decl c-decl
-;      (a-class-decl (class-name super-name field-ids m-decls)
- ;       super-name))))
+ ; (lambda (c-decl)
+  ;  (cases class-decl c-decl
+   ;   (a-class-decl (class-name super-name field-ids m-decls)
+    ;    super-name))))
 
 (define class-decl->field-ids
   (lambda (c-decl)
@@ -425,63 +833,99 @@
 (define method-decls->method-names
   (lambda (mds)
     (map method-decl->method-name mds)))
-        
-;^;;;;;;;;;;;;;;; procedures ;;;;;;;;;;;;;;;;
 
+
+
+
+;Procedimientos
 (define-datatype procval procval?
-  (closure 
-    (ids (list-of symbol?)) 
-    (body expression?)
-    (env environment?)))
+  (closure
+   (ids (list-of symbol?))
+   (body expression?)
+   (env environment?)))
 
-(define apply-procval
+;apply-procedure: evalua el cuerpo de un procedimientos en el ambiente extendido correspondiente
+(define apply-procedure
   (lambda (proc args)
     (cases procval proc
       (closure (ids body env)
-        (eval-expression body (extend-env ids args env))))))
-               
-;^;;;;;;;;;;;;;;; references ;;;;;;;;;;;;;;;;
+               (eval-expression body (extend-env ids args env))))))
+;************************************
+;Methods (objetos)**************
 
-(define-datatype reference reference?
-  (a-ref
-    (position integer?)
-    (vec vector?)))
+ (define find-method-and-apply
+  (lambda (m-name host-name self args)
+    (if (eqv? host-name 'object)
+      (eopl:error 'find-method-and-apply
+        "No method for name ~s" m-name)
+      (let ((m-decl (lookup-method-decl m-name
+                      (class-name->method-decls host-name))))
+        (if (method-decl? m-decl)
+          (apply-method m-decl host-name self args)
+          (find-method-and-apply m-name 
+            ;;(class-name->super-name host-name) 
+            self args))))))
+
+(define view-object-as
+  (lambda (parts class-name)
+    (if (eqv? (part->class-name parts) class-name)
+      parts
+      (view-object-as (parts) class-name))))
+
+(define apply-method
+  (lambda (m-decl host-name self args)
+    (let ((ids (method-decl->ids m-decl))
+          (body (method-decl->body m-decl))
+          ;(super-name (class-name->super-name host-name))
+          )
+      (eval-expression body
+        (extend-env
+          ;(cons '%super (cons 'self ids))
+          ;(cons super-name (cons self args))
+          (build-field-env 
+            (view-object-as self host-name)))))))
+
+(define build-field-env
+  (lambda (parts)
+    (if (null? parts)
+      (empty-env)
+      (extend-env-refs
+        (part->field-ids parts)
+        (part->fields    parts)
+        (build-field-env parts)))))
+ 
 
 
 
-;^;;;;;;;;;;;;;;; environments ;;;;;;;;;;;;;;;;
 
+;*******************************
+;Ambientes
+
+;definiciÃ³n del tipo de dato ambiente
 (define-datatype environment environment?
   (empty-env-record)
   (extended-env-record
-    (syms (list-of symbol?))
-    (vec vector?)              ; can use this for anything.
-    (env environment?))
-  )
+   (syms (list-of symbol?))
+   (vec vector?)
+   (env environment?)))
 
-(define empty-env
+(define scheme-value? (lambda (v) #t))
+
+;empty-env:      -> enviroment
+;funciÃ³n que crea un ambiente vacÃo
+(define empty-env  
   (lambda ()
-    (empty-env-record)))
+    (empty-env-record)))       ;llamado al constructor de ambiente vacÃo 
 
+
+;extend-env: <list-of symbols> <list-of numbers> enviroment -> enviroment
+;funciÃ³n que crea un ambiente extendido
 (define extend-env
   (lambda (syms vals env)
     (extended-env-record syms (list->vector vals) env)))
 
-(define apply-env-ref
-  (lambda (env sym)
-    (cases environment env
-      (empty-env-record ()
-        (eopl:error 'apply-env-ref "No binding for ~s" sym))
-      (extended-env-record (syms vals env)
-        (let ((pos (rib-find-position sym syms)))
-          (if (number? pos)
-              (a-ref pos vals)
-              (apply-env-ref env sym)))))))
-
-(define apply-env
-  (lambda (env sym)
-    (deref (apply-env-ref env sym))))
-
+;extend-env-recursively: <list-of symbols> <list-of <list-of symbols>> <list-of expressions> environment -> environment
+;funciÃ³n que crea un ambiente extendido para procedimientos recursivos
 (define extend-env-recursively
   (lambda (proc-names idss bodies old-env)
     (let ((len (length proc-names)))
@@ -493,144 +937,19 @@
             (iota len) idss bodies)
           env)))))
 
-(define rib-find-position 
-  (lambda (sym los)
-    (list-find-position sym los)))
+;********Ambientes de Method*************
 
-(define list-find-position
-  (lambda (sym los)
-    (list-index (lambda (sym1) (eqv? sym1 sym)) los)))
-
-(define list-index
-  (lambda (pred ls)
-    (cond
-      ((null? ls) #f)
-      ((pred (car ls)) 0)
-      (else (let ((list-index-r (list-index pred (cdr ls))))
-              (if (number? list-index-r)
-                (+ list-index-r 1)
-                #f))))))
-
-(define iota
-  (lambda (end)
-    (let loop ((next 0))
-      (if (>= next end) '()
-        (cons next (loop (+ 1 next)))))))
-
-(define difference
-  (lambda (set1 set2)
-    (cond
-      ((null? set1) '())
-      ((memv (car set1) set2)
-       (difference (cdr set1) set2))
-      (else (cons (car set1) (difference (cdr set1) set2))))))
-
-
-;^; new for ch 5
-(define extend-env-refs
-  (lambda (syms vec)
-    (extended-env-record syms vec (empty-env))))
-
-;^; waiting for 5-4-2.  Brute force code.
-(define list-find-last-position
-  (lambda (sym los)
-    (let loop
-      ((los los) (curpos 0) (lastpos #f))
-      (cond
-        ((null? los) lastpos)
-        ((eqv? sym (car los))
-         (loop (cdr los) (+ curpos 1) curpos))
-        (else (loop (cdr los) (+ curpos 1) lastpos))))))
-
-
-
-
-;; evaluar
-(define aux
-   (lambda (x)
-     x))
-
-(define-datatype part part? 
-  (a-part
-    (class-name symbol?)
-    (fields vector?)))
-
-(define new-object
-  (lambda (class-name)
-    (if (eqv? class-name 'object)
-      '()
-      (let ((c-decl (lookup-class class-name)))
-        ;(cons
-          (make-object c-decl)))))
-          ;(new-object (class-decl->super-name c-decl)))))))
-
-
-(define make-object
-  (lambda (c-decl)
-    (a-part
-      (class-decl->class-name c-decl)
-      (make-vector (length (class-decl->field-ids c-decl)) (direct-target 0)))))
-
-
-
-
-;;;;;;;;;;;;;;;; methods ;;;;;;;;;;;;;;;;
-
-;;; methods are represented by their declarations.  They are closed
-;;; over their fields at application time, by apply-method.
-
-(define find-method-and-apply
-  (lambda (m-name host-name self args)
-    (let ((m-decl (lookup-method-decl m-name
-                      (class-name->method-decls host-name))))
-    (if (method-decl? m-decl)
-          (apply-method m-decl host-name self args)
-          (eopl:error 'find-method-and-apply
-        "No method for name ~s" m-name)))))
-
-
-;;;;;;;;;;;;;;;;MODIFICADO;;;;;;;;;;;;;;;;;;;;;;;;;
-(define apply-method
-  (lambda (m-decl host-name self args)
-    (let ((ids (method-decl->ids m-decl))
-          (body (method-decl->body m-decl)))
-      (eval-expression body
-        (extend-env
-          (cons 'self ids)
-          (cons self args)
-          (build-field-env 
-            self))))))
-
-(define build-field-env
-  (lambda (part)
-    (if (null? part)
-      (empty-env)
-      (extend-env-refs
-        (part->field-ids part)
-         ;(car parts))
-        (part->fields part)
-        ))))
-         ;(car parts))
-        ;(empty-env)))))
-         ;(cdr parts))))))
-
-;;;;;;;;;;;;;;;; method environments ;;;;;;;;;;;;;;;;
-
-;; find a method in a list of method-decls, else return #f
-
-(define lookup-method-decl 
+ (define lookup-method-decl 
   (lambda (m-name m-decls)
     (cond
       ((null? m-decls) #f)
       ((eqv? m-name (method-decl->method-name (car m-decls)))
        (car m-decls))
       (else (lookup-method-decl m-name (cdr m-decls))))))
-      
-;;;;;;;;;;;;;;;; class environments ;;;;;;;;;;;;;;;;
 
-;;; we'll just use the list of class-decls.
+;*****Ambientes de Class********************
 
-(define the-class-env '())
+ (define the-class-env '())
 
 (define elaborate-class-decls!
   (lambda (c-decls)
@@ -646,9 +965,106 @@
         ((eqv? (class-decl->class-name (car env)) name) (car env))
         (else (loop (cdr env)))))))
 
-;;;;;;;;;;;;;;;; selectors of all sorts ;;;;;;;;;;;;;;;;
+;**************extend-env-refs****************
 
-(define part->class-name
+(define extend-env-refs
+  (lambda (syms vec env)
+    (extended-env-record syms vec env)))
+
+
+(define list-find-last-position
+  (lambda (sym los)
+    (let loop
+      ((los los) (curpos 0) (lastpos #f))
+      (cond
+        ((null? los) lastpos)
+        ((eqv? sym (car los))
+         (loop (cdr los) (+ curpos 1) curpos))
+        (else (loop (cdr los) (+ curpos 1) lastpos))))))
+
+
+;****************************************
+
+
+
+
+;iota: number -> list
+;funciÃ³n que retorna una lista de los nÃºmeros desde 0 hasta end
+(define iota
+  (lambda (end)
+    (let loop ((next 0))
+      (if (>= next end) '()
+        (cons next (loop (+ 1 next)))))))
+
+;funciÃ³n que busca un sÃmbolo en un ambiente
+(define apply-env
+  (lambda (env sym)
+    (deref (apply-env-ref env sym))))
+
+(define apply-env-ref
+  (lambda (env sym)
+    (cases environment env
+      (empty-env-record ()
+                        (eopl:error 'apply-env-ref "No binding for ~s" sym))
+      (extended-env-record (syms vals env)
+                           (let ((pos (rib-find-position sym syms)))
+                             (if (number? pos)
+                                 (a-ref pos vals)
+                                 (apply-env-ref env sym)))))))
+
+;*******************************
+;Blancos y Referencias
+
+(define expval?
+  (lambda (x)
+    (or (number? x) (procval? x) (part? x) (string? x))))
+
+(define ref-to-direct-target?
+  (lambda (x)
+    (and (reference? x)
+         (cases reference x
+           (a-ref (pos vec)
+                  (cases target (vector-ref vec pos)
+                    (direct-target (v) #t)
+                    (indirect-target (v) #f)))))))
+
+(define deref
+  (lambda (ref)
+    (cases target (primitive-deref ref)
+      (direct-target (expval) expval)
+      (indirect-target (ref1)
+                       (cases target (primitive-deref ref1)
+                         (direct-target (expval) expval)
+                         (indirect-target (p)
+                                          (eopl:error 'deref
+                                                      "Illegal reference: ~s" ref1)))))))
+
+
+(define primitive-deref
+  (lambda (ref)
+    (cases reference ref
+      (a-ref (pos vec)
+             (vector-ref vec pos)))))
+
+(define setref!
+  (lambda (ref val)
+    (let
+       ((ref (cases target (primitive-deref ref)
+               (direct-target (expval1) ref)
+                (indirect-target (ref1) ref1))))
+      (primitive-setref! ref (direct-target expval?)))
+  ))
+
+(define primitive-setref!
+  (lambda (ref val)
+    (cases reference ref
+      (a-ref (pos vec)
+             (vector-set! vec pos val)))))
+
+;******************************
+;****Partes del objeto***************
+
+ (define part->class-name
   (lambda (prt)
     (cases part prt
       (a-part (class-name fields)
@@ -673,209 +1089,89 @@
     (class-decl->method-decls (part->class-decl part))))
 
 ;(define part->super-name
-;  (lambda (part)
-;    (class-decl->super-name (part->class-decl part))))
+ ; (lambda (part)
+  ;  (class-decl->super-name (part->class-decl part))))
 
 (define class-name->method-decls
   (lambda (class-name)
     (class-decl->method-decls (lookup-class class-name))))
 
 ;(define class-name->super-name
-;  (lambda (class-name)
- ;   (class-decl->super-name (lookup-class class-name))))
+ ; (lambda (class-name)
+  ;  (class-decl->super-name (lookup-class class-name))))
 
 (define object->class-name
   (lambda (parts)
-    (part->class-name (car parts))))
-
-;;
-
-(define read-eval-print 
-  (sllgen:make-rep-loop  "-->" eval-program
-                         (sllgen:make-stream-parser
-                                  the-lexical-spec 
-                                  the-grammar)))
+    (part->class-name (parts))))
 
 
-;**************************************************************************************
-;Definición tipos de datos referencia y blanco
+;************************************
+;Funciones Auxiliares
 
-(define-datatype target target?
-  (direct-target (expval expval?))
-  (indirect-target (ref ref-to-direct-target?)))
+; funciones auxiliares para encontrar la posiciÃ³n de un sÃmbolo
+; en la lista de sÃmbolos de un ambiente
 
+(define rib-find-position 
+  (lambda (sym los)
+    (list-find-position sym los)))
 
+(define list-find-position
+  (lambda (sym los)
+    (list-index (lambda (sym1) (eqv? sym1 sym)) los)))
 
-;*******************************************************************************************
-;Blancos y Referencias
+(define list-index
+  (lambda (pred ls)
+    (cond
+      ((null? ls) #f)
+      ((pred (car ls)) 0)
+      (else (let ((list-index-r (list-index pred (cdr ls))))
+              (if (number? list-index-r)
+                (+ list-index-r 1)
+                #f))))))
 
-(define expval?
-  (lambda (x)
-    (or (number? x) (procval? x) (part? x) (list? x))))
-
-(define ref-to-direct-target?
-  (lambda (x)
-    (and (reference? x)
-         (cases reference x
-           (a-ref (pos vec)
-                  (cases target (vector-ref vec pos)
-                    (direct-target (v) #t)
-                    (indirect-target (v) #f)))))))
-
-(define deref
-  (lambda (ref)
-    (cases target (primitive-deref ref)
-      (direct-target (expval) expval)
-      (indirect-target (ref1)
-                       (cases target (primitive-deref ref1)
-                         (direct-target (expval) expval)
-                         (indirect-target (p)
-                                          (eopl:error 'deref
-                                                      "Illegal reference: ~s" ref1)))))))
-(define primitive-deref
-  (lambda (ref)
-    (cases reference ref
-      (a-ref (pos vec)
-             (vector-ref vec pos)))))
-
-
-
-
-
-
-(define setref!
-  (lambda (ref expval)
-    (let
-        ((ref (cases target (primitive-deref ref)
-                (direct-target (expval1) ref)
-                (indirect-target (ref1) ref1))))
-      (primitive-setref! ref (direct-target expval)))))
-
-
-(define primitive-setref!
-  (lambda (ref val)
-    (cases reference ref
-      (a-ref (pos vec)
-             (vector-set! vec pos val)))))
-
-(read-eval-print)
-(scan&parse "
-
-;RETORNA 4 POR SER POR REFERENCIA
-let
-p = proc(x)
-set x := 4
-in
-let
-a = 3
-in
-begin
-(p a);
-a
-end")
-
-;RETORNA 1
-(scan&parse "
-class c1
-field i
-field j
-method initialize (x)
-begin
-set x := 1
-end
-method countup (d)
-begin
-set i := +(i,d);
-set j := -(j,d)
-end
-method getstate () list(i,j)
-
-let t1 = 0
-t2 = 0
-
-in begin
-new c1(t1);
-t1
-end
-")
-
-;RETORNA (list 13 12)
-(scan&parse "
-class c1
-field i
-field j
-method initialize (x)
-begin
-set i := +(x,3);
-set j := +(x,2);
-set x := 1
-
-end
-method countup (d)
-begin
-set i := +(i,d);
-set j := -(j,d)
-end
-method getstate () list(i,j)
-
-let t1 = 0
-t2 = 0
-o = new c1 (10)
-in
-begin
-class.o.getstate()
-end
-")
-;RETORA ESTRUCTURA DE UN OBJETO POR SER (REFERENCIA)
-(scan&parse "
-class c1
-field i
-method initialize (x)
-set i := x
-method countup (d)
-set i := +(i,d)
-method getstate () i
-
-new c1(3)")
-
-
-;RETORNA 1 PORQUE EL METODO INITIALIZE MODIFICA LA REFERENCIA t1
-(scan&parse "
-class c1
-field i
-field j
-method initialize (x)
-begin
-set i := +(x,3);
-set j := +(x,2);
-set x := 1
-
-end
-method countup (d)
-begin
-set i := +(i,d);
-set j := -(j,d)
-end
-method getstate () list(i,j)
-
-let t1 = 0
-t2 = 0
-
-in
-begin
-new c1 (t1);
-t1
-end")
+;******************************
+;;Pruebas
+;
+;(show-the-datatypes)
+;just-scan
+;scan&parse
+;(just-scan "add1(x)")
+;(just-scan "add1(   x   )%cccc")
+;(just-scan "add1(  +(5, x)   )%cccc")
+;(just-scan "add1(  +(5, %ccccc x) ")
+;(scan&parse "add1(x)")
+;(scan&parse "add1(   x   )%cccc")
+;(scan&parse "add1(  +(5, x)   )%cccc")
+;(scan&parse "add1(  +(5, %ccccx)) ")
+;(scan&parse "if -(x,4) then +(y,11) else *(y,10)")
+;(scan&parse "let
+;x = -(y,1)
+;in
+;let
+;x = +(x,2)
+;in
+;add1(x)")
+;
+;(define caso1 (primapp-exp (incr-prim) (list (lit-exp 5))))
+;(define exp-numero (lit-exp 8))
+;(define exp-ident (var-exp 'c))
+;(define exp-app (primapp-exp (add-prim) (list exp-numero exp-ident)))
+;(define programa (a-program empty exp-app))
+;(define una-expresion-dificil (primapp-exp (mult-prim)
+;                                           (list (primapp-exp (incr-prim)
+;                                                              (list (var-exp 'v)
+;                                                                    (var-exp 'y)))
+;                                                 (var-exp 'x)
+;                                                 (lit-exp 200))))
+;(define un-programa-dificil
+;    (a-program empty una-expresion-dificil))
 
 
 
-;;Ejemplos 
-;; class c1 extends object  field x field y  method initialize()  begin set x = 1; set y = 2 end method m1() x method m2() y  let o1 = new c1() in send o1 m1()
+
+;EJEMPLO CLASES
+; class c1  field x field y  method initialize()  begin set x = 1; set y = 2 end method m1() x method m2() y  let o1 = new c1() in send o1 m1()
 
 
-;;;; class c1 extends object  field x field y  method initialize()  begin set x = 1; set y = 2 end method m1() x method m2() y  class c2 extends c1  field x field y  method initialize()  begin set x = 2; set y = 3 end method m1() x  let o1 = new c1() o2 = new c2() in send o2 m2()
 
-
-;;;; class c1 extends object  field x field y  method initialize()  begin   set x = 1; set y = 2 end method m1() x method m2() y  class c2 extends c1  field x field y  method initialize()  begin   super initialize(); set  x = 2; set y = 3 end method m1() x  let o1 = new c1() o2 = new c2() in send o2 m2()
-
-;;class c1 extends object  field x field y  method initialize()  begin   set x = 1; set y = 2 end method m1() x method m2() send self m1()  class c2 extends c1  field x field y  method initialize()  begin   super initialize(); set  x = 9; set y = 10 end method m1() x  let o1 = new c1() o2 = new c2() in send o2 m2()
+(interpretador)
